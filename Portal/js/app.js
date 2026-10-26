@@ -3079,7 +3079,7 @@ async function bootstrap() {
   // Sign out
   document.getElementById('sign-out-btn')
     ?.addEventListener('click', () => {
-      portalAuth.signOut().catch(err => {
+      portalAuth.signOutAll().catch(err => {
         showToast({ title: 'Sign-out failed', description: err.message, type: 'error' });
       });
     });

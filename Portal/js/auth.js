@@ -6,9 +6,11 @@
  *   - Redirect-flow handling on page load
  *   - Silent token acquisition with interactive popup fallback
  *   - ARM token acquisition for Azure Resource PIM
+ *   - Several signed-in accounts per tab (one active), with an optional
+ *     deploy-time tenant allow-list and chained sign-out of every account
  */
 
-/* global msal, msalConfig, GRAPH_SCOPES, ARM_SCOPE */
+/* global msal, msalConfig, GRAPH_SCOPES, ARM_SCOPE, accountUtils */
 
 const msalInstance = new msal.PublicClientApplication(window.msalConfig);
 
@@ -18,15 +20,31 @@ const _msalReady = msalInstance.initialize();
 /** Currently active account */
 let _account = null;
 
-/** sessionStorage key that persists the chosen tenant across F5 refreshes (same tab session) */
-const PREFERRED_TENANT_KEY = 'pim-portal-preferred-tenant';
+/** sessionStorage key that persists the active account entry (user + tenant) across F5 refreshes */
+const ACTIVE_ACCOUNT_KEY = 'pim-portal-active-account';
+
+/** sessionStorage key holding the homeAccountIds still to be signed out by signOutAll() */
+const SIGNOUT_QUEUE_KEY = 'pim-portal-signout-queue';
+
+/** Tenant allow-list injected at deploy time; empty allows any tenant. */
+const _allowedTenants = accountUtils.parseAllowedTenants(window.PORTAL_ALLOWED_TENANTS);
+
+/** Tenant of an account that was rejected by the allow-list during initAuth(). */
+let _blockedTenantId = null;
 
 /** Claims string to include in every token acquisition while an auth-context activation is in progress. */
 let _activeAuthContextClaims = null;
 
+function _tenantOf(account) {
+  return account?.tenantId || account?.idTokenClaims?.tid || '';
+}
+
 /**
  * Must be called once on app startup.
- * Handles the redirect callback if present, sets the active account.
+ * Handles the redirect callback if present and activates an allowed account:
+ * the one just signed in, else the one stored for this tab, else the first.
+ * Accounts from tenants outside the allow-list are never activated; see
+ * getBlockedTenantId().
  * @returns {Promise<msal.AccountInfo|null>}
  */
 async function initAuth() {
@@ -34,29 +52,158 @@ async function initAuth() {
     await _msalReady;
     const response = await msalInstance.handleRedirectPromise();
     if (response && response.account) {
-      msalInstance.setActiveAccount(response.account);
-      _account = response.account;
-      // Record which tenant was chosen so F5 restores the same one
-      sessionStorage.setItem(PREFERRED_TENANT_KEY, response.account.tenantId);
-      return _account;
+      if (isTenantAllowed(_tenantOf(response.account))) {
+        sessionStorage.setItem(ACTIVE_ACCOUNT_KEY, accountUtils.entryKey(response.account));
+      } else {
+        _blockedTenantId = _tenantOf(response.account);
+      }
     }
   } catch (err) {
     console.error('[Auth] handleRedirectPromise error:', err);
   }
 
-  const preferredTenantId = sessionStorage.getItem(PREFERRED_TENANT_KEY);
   const accounts = msalInstance.getAllAccounts();
-  if (accounts.length > 0) {
-    // When multiple accounts exist (home + guest tenants), honour the stored preference
-    const preferred = preferredTenantId
-      ? (accounts.find(a => a.tenantId === preferredTenantId) ?? accounts[0])
-      : accounts[0];
-    msalInstance.setActiveAccount(preferred);
-    _account = preferred;
-    return _account;
+  const chosen   = accountUtils.pickActiveAccount(accounts, sessionStorage.getItem(ACTIVE_ACCOUNT_KEY), _allowedTenants);
+  if (!chosen) {
+    if (!_blockedTenantId) {
+      const disallowed = accounts.find(a => !isTenantAllowed(_tenantOf(a)));
+      if (disallowed) _blockedTenantId = _tenantOf(disallowed);
+    }
+    return null;
   }
 
-  return null;
+  msalInstance.setActiveAccount(chosen);
+  _account = chosen;
+  sessionStorage.setItem(ACTIVE_ACCOUNT_KEY, accountUtils.entryKey(chosen));
+  return _account;
+}
+
+/**
+ * Tenant ID of an account the allow-list rejected during initAuth(), or null.
+ * When initAuth() returned an account, the rejected one was a newly added
+ * account and the previous account stayed active.
+ * @returns {string|null}
+ */
+function getBlockedTenantId() {
+  return _blockedTenantId;
+}
+
+/**
+ * @param {string} tenantId
+ * @returns {boolean} true when the deploy-time allow-list permits this tenant
+ */
+function isTenantAllowed(tenantId) {
+  return accountUtils.isTenantAllowed(tenantId, _allowedTenants);
+}
+
+/**
+ * @returns {string} entry key (homeAccountId|tenantId) of the active account, or ''
+ */
+function getActiveAccountKey() {
+  return accountUtils.entryKey(_account);
+}
+
+/**
+ * Signed-in account entries the portal may use, active entry first, then by name.
+ * @returns {msal.AccountInfo[]}
+ */
+function listAccounts() {
+  const activeKey = getActiveAccountKey();
+  return msalInstance.getAllAccounts()
+    .filter(a => isTenantAllowed(_tenantOf(a)))
+    .sort((a, b) => {
+      if (accountUtils.entryKey(a) === activeKey) return -1;
+      if (accountUtils.entryKey(b) === activeKey) return 1;
+      return String(a.name || a.username).localeCompare(String(b.name || b.username));
+    });
+}
+
+/**
+ * Make another signed-in account entry active. Reloads the page so no
+ * in-memory state (roles, policies, selections, timers) carries over;
+ * tokens come from the MSAL cache without a Microsoft round trip.
+ * @param {string} key  entry key from accountUtils.entryKey()
+ */
+function switchAccount(key) {
+  const target = listAccounts().find(a => accountUtils.entryKey(a) === key);
+  if (!target) throw new Error('Account not available');
+  msalInstance.setActiveAccount(target);
+  sessionStorage.setItem(ACTIVE_ACCOUNT_KEY, key);
+  window.location.reload();
+}
+
+/**
+ * Sign one user out of the portal (all of their tenant entries — MSAL removes
+ * accounts by homeAccountId). The user's Microsoft browser session is left
+ * alone; signOutAll() ends sessions too. Signing out the last allowed user
+ * falls through to signOutAll().
+ * @param {string} homeAccountId
+ */
+async function signOutUser(homeAccountId) {
+  const accounts = msalInstance.getAllAccounts();
+  const target   = accounts.find(a => a.homeAccountId === homeAccountId);
+  if (!target) return;
+
+  const remaining = accounts.filter(a => a.homeAccountId !== homeAccountId && isTenantAllowed(_tenantOf(a)));
+  if (!remaining.length) return signOutAll();
+
+  await msalInstance.clearCache({ account: target });
+  if (_account?.homeAccountId === homeAccountId) {
+    sessionStorage.setItem(ACTIVE_ACCOUNT_KEY, accountUtils.entryKey(remaining[0]));
+  }
+  window.location.reload();
+}
+
+/**
+ * Sign every account out of the portal and end each one's Microsoft session.
+ * Entra signs out one account per logout redirect, so the remaining users are
+ * queued in sessionStorage and bootstrap resumes via continueSignOutAll().
+ */
+async function signOutAll() {
+  const targets = accountUtils.logoutTargets(msalInstance.getAllAccounts());
+  sessionStorage.setItem(SIGNOUT_QUEUE_KEY, JSON.stringify(targets));
+  sessionStorage.removeItem(ACTIVE_ACCOUNT_KEY);
+  if (!(await continueSignOutAll())) window.location.reload();
+}
+
+/**
+ * @returns {boolean} true while a signOutAll() chain is in progress
+ */
+function isSigningOutAll() {
+  return sessionStorage.getItem(SIGNOUT_QUEUE_KEY) !== null;
+}
+
+/**
+ * Sign out the next queued user. Each entry is removed from the queue before
+ * its redirect, so a failed or abandoned logout can never loop.
+ * @returns {Promise<boolean>} true when the page is navigating to Microsoft;
+ *   false when the queue is finished (and cleared)
+ */
+async function continueSignOutAll() {
+  await _msalReady;
+  try { await msalInstance.handleRedirectPromise(); } catch { /* returning from logout */ }
+
+  let queue;
+  try { queue = JSON.parse(sessionStorage.getItem(SIGNOUT_QUEUE_KEY) || '[]'); } catch { queue = []; }
+  if (!Array.isArray(queue)) queue = [];
+
+  while (queue.length) {
+    const homeAccountId = queue.shift();
+    sessionStorage.setItem(SIGNOUT_QUEUE_KEY, JSON.stringify(queue));
+    const account = msalInstance.getAllAccounts().find(a => a.homeAccountId === homeAccountId);
+    if (!account) continue;
+    try {
+      await msalInstance.logoutRedirect({ account, postLogoutRedirectUri: window.location.origin });
+      return true;
+      // Page navigates away — execution does not continue here.
+    } catch (err) {
+      console.warn('[Auth] logoutRedirect failed, continuing:', err);
+      await msalInstance.clearCache({ account }).catch(() => {});
+    }
+  }
+
+  sessionStorage.removeItem(SIGNOUT_QUEUE_KEY);
+  return false;
 }
 
 /**
@@ -72,15 +219,6 @@ async function signIn() {
     scopes: [...window.GRAPH_SCOPES, window.ARM_SCOPE],
     prompt: 'select_account'
   });
-  // Page navigates away — execution does not continue here.
-}
-
-/**
- * Sign out the current user (redirect flow).
- */
-async function signOut() {
-  if (!_account) return;
-  await msalInstance.logoutRedirect({ account: _account });
   // Page navigates away — execution does not continue here.
 }
 
@@ -313,12 +451,11 @@ async function grantArmConsent() {
  * Uses loginRedirect with a tenant-specific authority and the current account's
  * UPN as loginHint so Microsoft can SSO the user silently when they are already
  * a guest/member of that tenant. The page navigates away; on return, initAuth()
- * picks up the new tenant's account via handleRedirectPromise().
+ * activates and stores the new tenant's account entry via handleRedirectPromise().
+ * If the switch is cancelled, the previous entry stays active.
  * @param {string} tenantId  Target tenant GUID
  */
 async function switchTenant(tenantId) {
-  // Persist before the redirect so initAuth() restores the right account on return
-  sessionStorage.setItem(PREFERRED_TENANT_KEY, tenantId);
   // Include ARM scope so both Graph and ARM are consented in one single prompt.
   await msalInstance.loginRedirect({
     authority: `https://login.microsoftonline.com/${tenantId}`,
@@ -329,4 +466,4 @@ async function switchTenant(tenantId) {
 }
 
 // Expose globally for other modules
-window.portalAuth = { initAuth, signIn, signOut, getGraphToken, getArmToken, getGraphTokenWithAuthContext, stepUpForAuthContexts, stepUpWithClaims, parseClaimsChallenge, ClaimsChallengeError, grantArmConsent, setAuthContextClaims, setRawClaims, getAccount, getUserId, switchTenant };
+window.portalAuth = { initAuth, signIn, signOutUser, signOutAll, isSigningOutAll, continueSignOutAll, getBlockedTenantId, isTenantAllowed, getActiveAccountKey, listAccounts, switchAccount, getGraphToken, getArmToken, getGraphTokenWithAuthContext, stepUpForAuthContexts, stepUpWithClaims, parseClaimsChallenge, ClaimsChallengeError, grantArmConsent, setAuthContextClaims, setRawClaims, getAccount, getUserId, switchTenant };

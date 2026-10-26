@@ -56,11 +56,7 @@ class RoleManager {
     this._enrichedPhase2 = false;
     if (!flags.azure) this._enrichedPhase2 = true;
 
-    const _cacheTenantId = portalAuth.getAccount()?.tenantId
-                         || portalAuth.getAccount()?.idTokenClaims?.tid
-                         || 'default';
-
-    const _cached = this._loadRoleCache(_cacheTenantId);
+    const _cached = this._loadRoleCache();
     if (_cached) this._applyCache(_cached);
 
     if (typeof showProgress === 'function') showProgress('Loading roles\u2026');
@@ -1122,13 +1118,14 @@ class RoleManager {
 
   // ── Role data cache ───────────────────────────────────────────────────────────
 
-  _loadRoleCache(tenantId) {
+  /** Cached roles for the active account entry (user + tenant), or null. */
+  _loadRoleCache() {
     try {
       const raw = sessionStorage.getItem(ROLES_CACHE_KEY);
       if (!raw) return null;
       const parsed = JSON.parse(raw);
-      if (parsed.v !== 1)                       return null;
-      if (parsed.tenantId !== tenantId)         return null;
+      if (parsed.v !== 2)                       return null;
+      if (parsed.accountKey !== portalAuth.getActiveAccountKey()) return null;
       if (!Array.isArray(parsed.eligibleRoles)) return null;
       if (!Array.isArray(parsed.activeRoles))   return null;
       return parsed;
@@ -1137,13 +1134,10 @@ class RoleManager {
 
   _saveRoleCache() {
     try {
-      const tenantId = portalAuth.getAccount()?.tenantId
-                     || portalAuth.getAccount()?.idTokenClaims?.tid
-                     || 'default';
       sessionStorage.setItem(ROLES_CACHE_KEY, JSON.stringify({
-        v:               1,
+        v:               2,
         ts:              Date.now(),
-        tenantId,
+        accountKey:      portalAuth.getActiveAccountKey(),
         eligibleRoles:   this.eligibleRoles,
         activeRoles:     this.activeRoles,
         pendingRequests: this._pendingRequests,
