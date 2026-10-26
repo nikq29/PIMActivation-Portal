@@ -22,9 +22,13 @@ const key = a => a.homeAccountId + '|' + a.tenantId;
 const ACTIVE = 'pim-portal-active-account';
 const QUEUE  = 'pim-portal-signout-queue';
 
-function loadAuth({ accounts = [], redirectResponse = null, allowed = '', storage = {}, logoutThrows = false } = {}) {
+function loadAuth({ accounts = [], redirectResponse = null, allowed = '', storage = {}, logoutFailsFor = [] } = {}) {
   let cache = [...accounts];
   const calls = { logoutRedirect: [], clearCache: [], loginRedirect: [], reload: 0 };
+
+  // Models MSAL 5.19.0's interaction flag: logoutRedirect sets it, a failed
+  // logout leaves it set, and only the next page load's handleRedirectPromise clears it.
+  let interactionInProgress = false;
 
   class FakePCA {
     initialize()            { return Promise.resolve(); }
@@ -37,7 +41,9 @@ function loadAuth({ accounts = [], redirectResponse = null, allowed = '', storag
     }
     async logoutRedirect(req) {
       calls.logoutRedirect.push(req.account.homeAccountId);
-      if (logoutThrows) throw new Error('logout failed');
+      if (interactionInProgress) throw new Error('interaction_in_progress');
+      interactionInProgress = true;
+      if (logoutFailsFor.includes(req.account.homeAccountId)) throw new Error('logout failed');
       cache = cache.filter(a => a.homeAccountId !== req.account.homeAccountId);
     }
     async loginRedirect(req) { calls.loginRedirect.push(req); }
@@ -160,12 +166,18 @@ test('continueSignOutAll skips missing users and never loops', async () => {
   assert.equal(data[QUEUE], undefined);
 });
 
-test('continueSignOutAll continues past a failed logout', async () => {
-  const { auth, calls, data } = loadAuth({ accounts: [A, B], logoutThrows: true, storage: { [QUEUE]: JSON.stringify([A.homeAccountId, B.homeAccountId]) } });
-  assert.equal(await auth.continueSignOutAll(), false);
-  assert.deepEqual(calls.logoutRedirect, [A.homeAccountId, B.homeAccountId]);
-  assert.deepEqual(calls.clearCache, [A.homeAccountId, B.homeAccountId]);
-  assert.equal(data[QUEUE], undefined);
+test('a failed logout reloads before the next one, so MSAL\'s interaction flag is cleared', async () => {
+  const { auth, calls, data } = loadAuth({ accounts: [A, B], logoutFailsFor: [A.homeAccountId], storage: { [QUEUE]: JSON.stringify([A.homeAccountId, B.homeAccountId]) } });
+  assert.equal(await auth.continueSignOutAll(), true);
+  assert.deepEqual(calls.logoutRedirect, [A.homeAccountId]);   // B is not attempted on this page
+  assert.deepEqual(calls.clearCache, [A.homeAccountId]);
+  assert.equal(calls.reload, 1);
+  assert.equal(data[QUEUE], JSON.stringify([B.homeAccountId]));
+
+  // Next page load: fresh MSAL state, B is signed out for real
+  const next = loadAuth({ accounts: [B], storage: { [QUEUE]: data[QUEUE] } });
+  assert.equal(await next.auth.continueSignOutAll(), true);
+  assert.deepEqual(next.calls.logoutRedirect, [B.homeAccountId]);
 });
 
 test('a corrupt sign-out queue is discarded', async () => {

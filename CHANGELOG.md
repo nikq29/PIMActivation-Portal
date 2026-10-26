@@ -10,7 +10,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 #### Multiple accounts and tenants
 - Account switcher — stay signed in with several accounts in one tab (for example a separate admin account per tenant) and switch between them in one click from **Switch Account** in the user card or the header's **Accounts & sign out** button. Switching reuses cached tokens and reloads the page, so no roles, policies or selections carry over between accounts.
-- Per-account sign-out (signs that user out of the portal and switches to a remaining account) and **Sign out of all accounts**, which ends every account's Microsoft session with one logout redirect per account.
+- Per-account **Remove** (removes that user from the portal and switches to a remaining account; their Microsoft session is kept) and **Sign out of all accounts**, which ends every account's Microsoft session with one logout redirect per account.
 - Pending Conditional Access step-up activations are tied to the account that started them and are discarded if a different account is active on return.
 
 #### Self-hosted deployment

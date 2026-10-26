@@ -1516,7 +1516,7 @@ function _renderAccountList(body) {
           (isCurrent ? '<span class="tenant-item-badge">Current</span>' : _CHEVRON_SVG) +
         '</button>' +
         '<button class="icon-btn account-signout-btn" data-home-account-id="' + escapeHtml(a.homeAccountId) + '"' +
-          ' aria-label="Sign out ' + escapeHtml(a.username) + '" title="Sign out ' + escapeHtml(a.username) + '">' +
+          ' aria-label="Remove ' + escapeHtml(a.username) + ' from this portal" title="Remove ' + escapeHtml(a.username) + ' from this portal (Sign out of all accounts also ends Microsoft sessions)">' +
           _SIGNOUT_SVG +
         '</button>' +
       '</div>'
@@ -1550,7 +1550,7 @@ function _renderAccountList(body) {
 
 function _signOutAccountUser(homeAccountId) {
   portalAuth.signOutUser(homeAccountId).catch(err => {
-    showToast({ title: 'Sign-out failed', description: err.message, type: 'error' });
+    showToast({ title: 'Remove account failed', description: err.message, type: 'error' });
   });
 }
 
@@ -1559,10 +1559,11 @@ function _showAccountSignOutConfirm(row, entries) {
   const confirm = document.createElement('div');
   confirm.className = 'account-confirm';
   confirm.innerHTML =
-    '<span>Signs out ' + escapeHtml(entries[0].username) + ' from ' + entries.length + ' tenants: ' +
-      escapeHtml(entries.map(_accountTenantLabel).join(', ')) + '</span>' +
+    '<span>Removes ' + escapeHtml(entries[0].username) + ' from this portal in ' + entries.length + ' tenants: ' +
+      escapeHtml(entries.map(_accountTenantLabel).join(', ')) +
+      '. Use Sign out of all accounts to also end Microsoft sessions.</span>' +
     '<div class="account-confirm-actions">' +
-      '<button class="btn btn-danger btn-sm" data-action="confirm">Sign out</button>' +
+      '<button class="btn btn-danger btn-sm" data-action="confirm">Remove</button>' +
       '<button class="btn btn-ghost btn-sm" data-action="cancel">Cancel</button>' +
     '</div>';
   row.after(confirm);

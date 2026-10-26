@@ -199,6 +199,7 @@ resource deployScript 'Microsoft.Resources/deploymentScripts@2023-08-01' = {
       { name: 'TENANT_ID',      value: authorityTenant }
       { name: 'MULTI_TENANT',   value: multiTenant ? 'true' : 'false' }
       { name: 'ALLOWED_TENANTS', value: join(allowedTenantIds, ',') }
+      { name: 'ALLOWED_TENANT_COUNT', value: string(length(allowedTenantIds)) }
       { name: 'SWA_NAME',       value: staticWebApp.name }
       { name: 'PORTAL_URL',     value: portalUrl }
       { name: 'CUSTOM_DOMAIN_URL', value: empty(customDomain) ? '' : customDomainUrl }
@@ -218,8 +219,16 @@ resource deployScript 'Microsoft.Resources/deploymentScripts@2023-08-01' = {
         exit 1
       fi
 
-      if [ -n "${ALLOWED_TENANTS}" ]; then
-        for allowed_tenant in $(printf '%s' "${ALLOWED_TENANTS}" | tr ',' ' '); do
+      if [ "${ALLOWED_TENANT_COUNT}" != "0" ]; then
+        # Split without word-splitting or globbing so blank entries are caught
+        set -f
+        IFS=',' read -r -a allowed_tenant_list <<< "${ALLOWED_TENANTS}"
+        set +f
+        if [ "${#allowed_tenant_list[@]}" -ne "${ALLOWED_TENANT_COUNT}" ]; then
+          echo "ERROR: allowedTenantIds must contain only tenant GUIDs (found an empty entry)."
+          exit 1
+        fi
+        for allowed_tenant in "${allowed_tenant_list[@]}"; do
           if ! printf '%s' "${allowed_tenant}" | grep -Eq '^[0-9a-fA-F]{8}-([0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$'; then
             echo "ERROR: allowedTenantIds entry '${allowed_tenant}' is not a tenant GUID."
             exit 1

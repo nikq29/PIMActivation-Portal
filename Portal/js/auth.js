@@ -197,8 +197,13 @@ async function continueSignOutAll() {
       return true;
       // Page navigates away — execution does not continue here.
     } catch (err) {
-      console.warn('[Auth] logoutRedirect failed, continuing:', err);
+      // A failed logoutRedirect leaves MSAL's interaction flag set for this page,
+      // which would make every further logout throw. Reload: the next load's
+      // handleRedirectPromise clears the flag and continues with the next entry.
+      console.warn('[Auth] logoutRedirect failed, continuing after reload:', err);
       await msalInstance.clearCache({ account }).catch(() => {});
+      window.location.reload();
+      return true;
     }
   }
 

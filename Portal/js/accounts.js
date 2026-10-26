@@ -25,17 +25,21 @@
     return account.homeAccountId + '|' + _tenantOf(account);
   }
 
+  /** Matches no tenant: keeps a non-empty list with no usable entries closed. */
+  const NO_TENANT = '\u0000no-tenant';
+
   /**
-   * Parse the deploy-time allow-list. An empty value or the unreplaced
-   * placeholder means "allow any tenant". Unrecognised tokens are kept so a
-   * malformed list fails closed (they simply never match).
+   * Parse the deploy-time allow-list. Only an empty value or the unreplaced
+   * placeholder means "allow any tenant". Unrecognised tokens are kept, and a
+   * non-empty value with no tokens (e.g. ",") yields a never-matching entry,
+   * so a malformed list always fails closed.
    * @param {string|undefined} raw  comma/semicolon/whitespace separated tenant IDs
    * @returns {string[]} lowercased, de-duplicated tenant IDs
    */
   function parseAllowedTenants(raw) {
-    if (typeof raw !== 'string' || raw.includes(PLACEHOLDER)) return [];
+    if (typeof raw !== 'string' || raw === '' || raw.includes(PLACEHOLDER)) return [];
     const tokens = raw.split(/[\s,;]+/).map(t => t.trim().toLowerCase()).filter(Boolean);
-    return [...new Set(tokens)];
+    return tokens.length ? [...new Set(tokens)] : [NO_TENANT];
   }
 
   /**

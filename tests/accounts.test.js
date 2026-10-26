@@ -1,6 +1,6 @@
 /**
  * Unit tests for Portal/js/accounts.js
- * Run with: node --test tests/
+ * Run with: node --test 'tests/*.test.js'
  */
 
 const test   = require('node:test');
@@ -28,7 +28,7 @@ test('entryKey combines homeAccountId and tenant', () => {
 });
 
 test('parseAllowedTenants: empty and placeholder allow any', () => {
-  for (const raw of [undefined, '', '   ', '__PORTAL_ALLOWED_TENANTS__']) {
+  for (const raw of [undefined, '', '__PORTAL_ALLOWED_TENANTS__']) {
     assert.deepEqual(parseAllowedTenants(raw), []);
   }
 });
@@ -78,4 +78,10 @@ test('mergeTenantCache keeps tenants reported by other accounts', () => {
   assert.deepEqual(Object.keys(merged).sort(), [A.tenantId, B.tenantId]);
   assert.equal(mergeTenantCache(merged, [{ tenantId: A.tenantId, displayName: 'Contoso Ltd' }])[A.tenantId].displayName, 'Contoso Ltd');
   assert.deepEqual(cache, { [A.tenantId]: { tenantId: A.tenantId, displayName: 'Contoso' } }); // input not mutated
+});
+
+test('parseAllowedTenants fails closed when a non-empty list has no usable entries', () => {
+  for (const raw of [',', ' , ', '   ', ';']) {
+    assert.equal(isTenantAllowed(A.tenantId, parseAllowedTenants(raw)), false, JSON.stringify(raw));
+  }
 });
