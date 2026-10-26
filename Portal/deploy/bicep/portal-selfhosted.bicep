@@ -13,7 +13,8 @@ metadata source = 'https://github.com/Noble-Effeciency13/PIMActivation-Portal'
 //   1. Creates the Static Web App
 //   2. Downloads the portal source archive
 //   3. Caches the source archive in a customer-owned storage account
-//   4. Injects the supplied clientId and tenantId into msal-config.js
+//   4. Injects the supplied clientId, tenant authority (tenantId, or 'organizations'
+//      when multiTenant is true) and optional allowedTenantIds into msal-config.js
 //   5. Deploys the portal files to the Static Web App via the SWA CLI
 //   6. Attempts to add the SPA redirect URIs to the Entra app registration
 //   7. Outputs the SPA redirect URIs in case Graph permissions require manual setup
@@ -25,16 +26,25 @@ metadata source = 'https://github.com/Noble-Effeciency13/PIMActivation-Portal'
 //     add the redirectUris output manually after deployment.
 //   - Grant tenant-wide admin consent if your tenant requires administrator
 //     consent for the configured delegated scopes.
+//   - For multiTenant = true, set the app registration's supported account types to
+//     "Accounts in any organizational directory" and grant admin consent in every
+//     tenant that will use the portal (see the adminConsentUrls output).
 //   - If customDomain is set, add the custom domain to the Static Web App manually
 //     after deployment once DNS can point at the generated default hostname.
 
-@description('Required application (client) ID of an existing single-tenant Entra ID SPA app registration for the portal.')
+@description('Required application (client) ID of an existing Entra ID SPA app registration for the portal. Single-tenant by default; multi-tenant ("Accounts in any organizational directory") when multiTenant is true.')
 @minLength(36)
 @maxLength(36)
 param applicationClientId string
 
 @description('Tenant ID of your Azure AD directory. Defaults to the current subscription tenant.')
 param tenantId string = subscription().tenantId
+
+@description('Deploy the portal as multi-tenant (sign-in authority "organizations") so one site serves several tenants. Requires the app registration\'s supported account types to be "Accounts in any organizational directory" and admin consent in each tenant.')
+param multiTenant bool = false
+
+@description('Optional tenant IDs (GUIDs) allowed to sign in to the portal. Leave empty to allow any tenant that has consented to the app. This only shapes the portal UI; use per-tenant admin consent and "Assignment required" on the enterprise app for access control.')
+param allowedTenantIds array = []
 
 @description('Optional custom domain to add as an Entra SPA redirect URI (e.g. pim.contoso.com). The Static Web App custom domain must be added manually after deployment, once DNS can point at the generated default hostname.')
 param customDomain string = ''
@@ -76,6 +86,8 @@ var portalUrl   = 'https://${staticWebApp.properties.defaultHostname}'
 var customDomainUrl = 'https://${customDomain}'
 var redirectUris = empty(customDomain) ? [ portalUrl ] : [ portalUrl, customDomainUrl ]
 var adminConsentUrl = uri(environment().authentication.loginEndpoint, '${tenantId}/adminconsent?client_id=${applicationClientId}')
+var authorityTenant = multiTenant ? 'organizations' : tenantId
+var multiTenantNextStep = multiTenant ? ' Multi-tenant: also grant admin consent in every tenant that will use the portal (see adminConsentUrls, or open ${environment().authentication.loginEndpoint}<tenant-id>/adminconsent?client_id=${applicationClientId}).' : ''
 
 // Contributor role definition ID (built-in).
 // Scoped narrowly to the Static Web App resource so the deployment identity can
@@ -184,7 +196,9 @@ resource deployScript 'Microsoft.Resources/deploymentScripts@2023-08-01' = {
     forceUpdateTag:    deploymentScriptRunId
     environmentVariables: [
       { name: 'CLIENT_ID',      value: applicationClientId }
-      { name: 'TENANT_ID',      value: tenantId }
+      { name: 'TENANT_ID',      value: authorityTenant }
+      { name: 'MULTI_TENANT',   value: multiTenant ? 'true' : 'false' }
+      { name: 'ALLOWED_TENANTS', value: join(allowedTenantIds, ',') }
       { name: 'SWA_NAME',       value: staticWebApp.name }
       { name: 'PORTAL_URL',     value: portalUrl }
       { name: 'CUSTOM_DOMAIN_URL', value: empty(customDomain) ? '' : customDomainUrl }
@@ -202,6 +216,15 @@ resource deployScript 'Microsoft.Resources/deploymentScripts@2023-08-01' = {
       if [ -z "${CLIENT_ID}" ]; then
         echo "ERROR: applicationClientId is required. Create an Entra ID SPA app registration first, then rerun this deployment with its client ID."
         exit 1
+      fi
+
+      if [ -n "${ALLOWED_TENANTS}" ]; then
+        for allowed_tenant in $(printf '%s' "${ALLOWED_TENANTS}" | tr ',' ' '); do
+          if ! printf '%s' "${allowed_tenant}" | grep -Eq '^[0-9a-fA-F]{8}-([0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$'; then
+            echo "ERROR: allowedTenantIds entry '${allowed_tenant}' is not a tenant GUID."
+            exit 1
+          fi
+        done
       fi
 
       export DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1
@@ -311,9 +334,15 @@ resource deployScript 'Microsoft.Resources/deploymentScripts@2023-08-01' = {
       echo "==> Portal app registration client ID: ${CLIENT_ID}"
       sed -i "s|__PORTAL_CLIENT_ID__|${CLIENT_ID}|g" "${PORTAL_DIR}/js/msal-config.js"
       sed -i "s|__PORTAL_TENANT_ID__|${TENANT_ID}|g" "${PORTAL_DIR}/js/msal-config.js"
+      if [ -n "${ALLOWED_TENANTS}" ] && ! grep -q '__PORTAL_ALLOWED_TENANTS__' "${PORTAL_DIR}/js/msal-config.js"; then
+        echo "ERROR: the downloaded portal source predates allowedTenantIds support; set portalSourceBranch=main or use a newer release."
+        exit 1
+      fi
+      echo "==> Allowed tenants: ${ALLOWED_TENANTS:-<any>}"
+      sed -i "s|__PORTAL_ALLOWED_TENANTS__|${ALLOWED_TENANTS}|g" "${PORTAL_DIR}/js/msal-config.js"
 
       echo "==> Verifying injection..."
-      if grep -q '__PORTAL_CLIENT_ID__\|__PORTAL_TENANT_ID__' "${PORTAL_DIR}/js/msal-config.js"; then
+      if grep -q '__PORTAL_CLIENT_ID__\|__PORTAL_TENANT_ID__\|__PORTAL_ALLOWED_TENANTS__' "${PORTAL_DIR}/js/msal-config.js"; then
         echo "ERROR: placeholder injection failed" && exit 1
       fi
 
@@ -452,15 +481,17 @@ resource deployScript 'Microsoft.Resources/deploymentScripts@2023-08-01' = {
       GRAPH_FILTER=$(printf "appId eq '%s'" "${CLIENT_ID}" | jq -sRr @uri)
       APP_LOOKUP=$(az rest \
         --method GET \
-        --uri "https://graph.microsoft.com/v1.0/applications?\$filter=${GRAPH_FILTER}&\$select=id,spa" \
+        --uri "https://graph.microsoft.com/v1.0/applications?\$filter=${GRAPH_FILTER}&\$select=id,spa,signInAudience" \
         --output json \
         2>"${APP_REDIRECT_LOG}")
       GRAPH_LOOKUP_EXIT=$?
 
       APP_OBJECT_ID=""
+      APP_SIGN_IN_AUDIENCE=""
       CURRENT_REDIRECT_URIS="[]"
       if [ ${GRAPH_LOOKUP_EXIT} -eq 0 ]; then
         APP_OBJECT_ID=$(printf '%s' "${APP_LOOKUP}" | jq -r '.value[0].id // empty')
+        APP_SIGN_IN_AUDIENCE=$(printf '%s' "${APP_LOOKUP}" | jq -r '.value[0].signInAudience // empty')
         CURRENT_REDIRECT_URIS=$(printf '%s' "${APP_LOOKUP}" | jq -c '.value[0].spa.redirectUris // []')
       fi
 
@@ -494,6 +525,10 @@ resource deployScript 'Microsoft.Resources/deploymentScripts@2023-08-01' = {
       else
         echo "==> Entra app registration redirect URIs updated:"
         printf '%s\n' "${UPDATED_REDIRECT_URIS}" | jq -r '.[]'
+      fi
+
+      if [ "${MULTI_TENANT}" = "true" ] && [ "${APP_SIGN_IN_AUDIENCE}" = "AzureADMyOrg" ]; then
+        echo "WARNING: multiTenant=true but the app registration signInAudience is '${APP_SIGN_IN_AUDIENCE}'. Set Supported account types to 'Accounts in any organizational directory', otherwise users from other tenants cannot sign in."
       fi
 
       echo "==> Deployment complete."
@@ -531,5 +566,8 @@ output customDomainNextStep string = empty(customDomain) ? '' : 'Create a CNAME 
 @description('Admin consent URL for the portal application.')
 output adminConsentUrl string = adminConsentUrl
 
+@description('Admin consent URL for each tenant in allowedTenantIds.')
+output adminConsentUrls array = [for allowedTenantId in allowedTenantIds: uri(environment().authentication.loginEndpoint, '${allowedTenantId}/adminconsent?client_id=${applicationClientId}')]
+
 @description('Next step after deployment.')
-output nextStep string = 'The deployment script attempts to add redirectUris to the app registration. If the deployment log shows a Microsoft Graph permission warning, add redirectUris manually, then grant admin consent if required: ${adminConsentUrl}'
+output nextStep string = 'The deployment script attempts to add redirectUris to the app registration. If the deployment log shows a Microsoft Graph permission warning, add redirectUris manually, then grant admin consent if required: ${adminConsentUrl}${multiTenantNextStep}'

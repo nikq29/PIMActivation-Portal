@@ -7,6 +7,9 @@
  *                        → Bicep-created Entra app ID        (self-hosted ARM)
  * __PORTAL_TENANT_ID__  → 'organizations'                   (hosted CI, multi-tenant)
  *                        → Bicep parameter tenantId          (self-hosted ARM, single-tenant)
+ *                        → 'organizations'                   (self-hosted ARM, multiTenant = true)
+ * __PORTAL_ALLOWED_TENANTS__ → ''                            (hosted CI, any tenant)
+ *                        → Bicep parameter allowedTenantIds  (self-hosted ARM, comma-separated)
  *
  * Scopes requested on first sign-in (delegated, user-consented).
  * We request the minimal set; additional scopes are acquired silently on demand.
@@ -36,6 +39,13 @@ window.msalConfig = {
     }
   }
 };
+
+/**
+ * Comma-separated tenant IDs allowed to sign in. Empty (or the unreplaced
+ * placeholder during local development) allows any tenant. This only shapes
+ * the UI — access control is per-tenant admin consent / assignment.
+ */
+window.PORTAL_ALLOWED_TENANTS = '__PORTAL_ALLOWED_TENANTS__';
 
 /** Delegated scopes needed for Entra PIM and user profile */
 window.GRAPH_SCOPES = [

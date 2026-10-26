@@ -188,7 +188,7 @@ The Bicep file at [`Portal/deploy/bicep/portal-selfhosted.bicep`](Portal/deploy/
 ### Prerequisites
 
 1. An Azure subscription and a resource group you can deploy into.
-2. An **existing single-tenant Entra ID SPA app registration** for the portal. Azure deployment scripts cannot complete interactive sign-in to Microsoft Graph reliably, so the app registration must exist before deployment and its application (client) ID is a required parameter.
+2. An **existing Entra ID SPA app registration** for the portal: single-tenant by default, or multi-tenant ("Accounts in any organizational directory") if you deploy with `multiTenant = true` — see [Multi-tenant deployment](#multi-tenant-deployment). Azure deployment scripts cannot complete interactive sign-in to Microsoft Graph reliably, so the app registration must exist before deployment and its application (client) ID is a required parameter.
 3. Tenant-wide admin consent for the delegated permissions if your tenant requires it (the deployment outputs an `adminConsentUrl` you can use after deployment).
 
 ### What the deployment does
@@ -198,7 +198,7 @@ The Bicep file at [`Portal/deploy/bicep/portal-selfhosted.bicep`](Portal/deploy/
 3. Creates a customer-owned storage account that caches the downloaded portal source archive — used as a fallback for redeploys if GitHub is unreachable.
 4. Runs an Azure CLI deployment script that:
    - Downloads the portal source ZIP from the chosen branch (or your `portalSourceArchiveUrl`).
-   - Injects your `clientId` and `tenantId` into `Portal/js/msal-config.js`.
+   - Injects your `clientId`, the tenant authority (`tenantId`, or `organizations` when `multiTenant` is true) and the optional `allowedTenantIds` into `Portal/js/msal-config.js`.
    - Verifies that no placeholders remain after injection.
    - Deploys `Portal/` to the Static Web App via the SWA CLI.
    - Attempts to add the generated SPA redirect URIs to your app registration through Microsoft Graph.
@@ -210,8 +210,10 @@ The Bicep file at [`Portal/deploy/bicep/portal-selfhosted.bicep`](Portal/deploy/
 
 | Parameter | Required | Default | Description |
 |---|---|---|---|
-| `applicationClientId` | yes | — | Application (client) ID of an existing single-tenant Entra ID SPA app registration for the portal. |
-| `tenantId` | no | `subscription().tenantId` | Tenant ID. Defaults to the current subscription tenant. |
+| `applicationClientId` | yes | — | Application (client) ID of an existing Entra ID SPA app registration for the portal (single-tenant, or multi-tenant when `multiTenant` is true). |
+| `tenantId` | no | `subscription().tenantId` | Tenant ID. Defaults to the current subscription tenant. Used as the sign-in authority in single-tenant mode. |
+| `multiTenant` | no | `false` | Deploy as multi-tenant (sign-in authority `organizations`) so one portal serves several tenants. |
+| `allowedTenantIds` | no | `[]` | Tenant IDs allowed to sign in. Empty allows any tenant that has consented. UI restriction only — see [Multi-tenant deployment](#multi-tenant-deployment). |
 | `customDomain` | no | `''` | Optional custom domain (e.g. `pim.contoso.com`). Included in the redirect URI auto-merge attempt. The Static Web App custom domain itself must still be added manually after DNS validates. |
 | `portalSourceBranch` | no | `''` | Deploy from a branch instead of the latest release. Leave blank to deploy the latest published release asset (`portal-source.zip`); set to e.g. `main` to pull the newest commit at deployment time. |
 | `portalSourceArchiveUrl` | no | `''` | Override the source download with a publicly reachable ZIP. The archive must contain `Portal/index.html`. ZIPs from PowerShell `Compress-Archive` are supported. |
@@ -232,8 +234,20 @@ The Bicep file at [`Portal/deploy/bicep/portal-selfhosted.bicep`](Portal/deploy/
 | `clientId` | Echoes the client ID you supplied. |
 | `customDomainNextStep` | If you supplied `customDomain`, the CNAME and binding instructions. |
 | `adminConsentUrl` | Tenant-wide admin consent URL for the app registration. |
+| `adminConsentUrls` | One admin consent URL per tenant in `allowedTenantIds`. |
 | `sourceArchiveCache` | The customer-owned blob that holds the cached source archive. |
 | `nextStep` | A reminder to verify redirect URIs and grant admin consent if needed. |
+
+### Multi-tenant deployment
+
+One portal can serve several tenants, for example a company's production, development and subsidiary tenants. Users sign in with a separate account per tenant and switch between them in the portal's **Accounts** menu.
+
+1. On the app registration, set **Authentication → Supported account types** to **Accounts in any organizational directory**.
+2. Deploy with `multiTenant = true` and, optionally, `allowedTenantIds` set to the tenants that should use the portal.
+3. Grant admin consent in **every** tenant — open each URL in the `adminConsentUrls` output (or `https://login.microsoftonline.com/<tenant-id>/adminconsent?client_id=<client-id>`) as an administrator of that tenant.
+4. Optional: add the **`login_hint`** optional claim to the ID token (app registration → **Token configuration**). With it, **Sign out of all accounts** signs each account out without Entra asking which account to sign out.
+
+> **The allow-list is not a security boundary.** It only decides which tenants the portal UI accepts. Access is controlled per tenant by admin consent and, if you want to limit who can sign in, by enabling **Assignment required** on the portal's enterprise application in each tenant. The portal uses delegated permissions only, so nobody can do more than their own PIM eligibilities allow.
 
 ### Redirect URIs and custom domains
 
@@ -401,7 +415,7 @@ cd Portal
 npx http-server -p 5500 -c-1
 ```
 
-Then create a development app registration with `http://localhost:5500` as a SPA redirect URI and edit `js/msal-config.js` locally to swap the placeholders for your dev `clientId` and `tenantId`. **Do not commit those edits.**
+Then create a development app registration with `http://localhost:5500` as a SPA redirect URI and edit `js/msal-config.js` locally to swap the placeholders for your dev `clientId` and `tenantId` (`__PORTAL_ALLOWED_TENANTS__` can stay as-is — it means any tenant). **Do not commit those edits.**
 
 The full walkthrough — including running under HTTPS, CSP relaxations to avoid in production, and tips for debugging the batch engine — lives in the [Local Development wiki page](docs/wiki/Local-Development.md).
 
@@ -411,7 +425,7 @@ The full walkthrough — including running under HTTPS, CSP relaxations to avoid
 
 | Workflow | File | Trigger | What it does |
 |---|---|---|---|
-| Deploy Portal | [`deploy-portal.yml`](.github/workflows/deploy-portal.yml) | Push to `main` touching `Portal/**` | Injects `PORTAL_CLIENT_ID` / `organizations` into `msal-config.js` and deploys to Azure Static Web Apps. |
+| Deploy Portal | [`deploy-portal.yml`](.github/workflows/deploy-portal.yml) | Push to `main` touching `Portal/**` | Injects `PORTAL_CLIENT_ID` / `organizations` and an empty tenant allow-list into `msal-config.js` and deploys to Azure Static Web Apps. |
 | Deploy GitHub Pages | [`deploy-pages.yml`](.github/workflows/deploy-pages.yml) | Push to `main` touching `website/**` | Publishes the landing site to GitHub Pages. |
 | Sync Deployment Templates | [`sync-deployment-templates.yml`](.github/workflows/sync-deployment-templates.yml) | Push / PR touching Bicep or `azuredeploy.json` | Builds Bicep → ARM and fails PRs that drift; auto-commits the synced template on `main`. |
 | Sync Favicons | [`sync-favicons.yml`](.github/workflows/sync-favicons.yml) | Changes to favicon sources | Runs `scripts/sync-favicons.ps1`, fails PRs with drift, auto-commits on `main`. |
