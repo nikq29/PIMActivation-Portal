@@ -719,6 +719,12 @@ const _opOverlay = {
   },
 
   /** Mark the operation complete, briefly show the final state, then close. */
+  /** True while an activation / deactivation is shown in the overlay. */
+  isOpen() {
+    this._init();
+    return !!this._el && !this._el.hidden;
+  },
+
   close(delay = 1400) {
     this._init();
     if (!this._el) return;
@@ -1356,9 +1362,8 @@ function _getTenantCache() {
 }
 
 function _updateTenantCache(tenants) {
-  const cache = {};
-  tenants.forEach(t => { cache[t.tenantId] = t; });
-  localStorage.setItem(TENANT_CACHE_KEY, JSON.stringify(cache));
+  // Merge: each signed-in account only reports the tenants it can reach
+  localStorage.setItem(TENANT_CACHE_KEY, JSON.stringify(accountUtils.mergeTenantCache(_getTenantCache(), tenants)));
 }
 
 function _updateTenantDisplay(account) {
@@ -1399,12 +1404,15 @@ async function _openTenantPicker() {
   }
 }
 
-function _renderTenantList(body, tenants) {
+function _renderTenantList(body, allTenants) {
   const currentTenantId = portalAuth.getAccount()?.tenantId || '';
 
   // Cache names so the profile card can show the display name
-  _updateTenantCache(tenants);
+  _updateTenantCache(allTenants);
   _updateTenantDisplay(portalAuth.getAccount());
+
+  // Only offer tenants the deploy-time allow-list permits
+  const tenants = allTenants.filter(t => portalAuth.isTenantAllowed(t.tenantId));
 
   if (tenants.length === 0) {
     body.innerHTML = '<p class="tenant-picker-hint">No other tenants found.</p>';
@@ -2107,7 +2115,8 @@ async function _handleClaimsChallenge(err, payload) {
   sessionStorage.setItem(PENDING_ACTIVATION_KEY, JSON.stringify({
     ...payload,
     claims: err.claims,
-    claimsChallengeRetried: true
+    claimsChallengeRetried: true,
+    accountKey: portalAuth.getActiveAccountKey()
   }));
   showProgress('Redirecting for authentication…');
   try {
@@ -2280,7 +2289,8 @@ async function handleActivate() {
       cappedRoles,
       justification,
       ticketNumber,
-      authContextId: authContextIds[0]
+      authContextId: authContextIds[0],
+      accountKey: portalAuth.getActiveAccountKey()
     }));
     showProgress('Redirecting for authentication…');
     await portalAuth.stepUpForAuthContexts(authContextIds, cappedRoles);
@@ -3010,6 +3020,13 @@ async function bootstrap() {
   const loadingMsg = document.getElementById('loading-msg');
   if (loadingMsg) loadingMsg.textContent = 'Signing you in…';
 
+  // Resume "Sign out of all accounts": one Microsoft logout redirect per account
+  if (portalAuth.isSigningOutAll()) {
+    if (loadingMsg) loadingMsg.textContent = 'Signing out\u2026';
+    if (await portalAuth.continueSignOutAll()) return;
+    if (loadingMsg) loadingMsg.textContent = 'Signing you in…';
+  }
+
   // Handle MSAL redirect promise
   try {
     await portalAuth.initAuth();
@@ -3018,6 +3035,33 @@ async function bootstrap() {
   }
 
   const account = portalAuth.getAccount();
+  const blockedTenantId = portalAuth.getBlockedTenantId();
+  if (!account && blockedTenantId) {
+    // Only accounts from tenants outside the allow-list are signed in
+    if (loadingMsg) loadingMsg.textContent = 'This portal isn\u2019t enabled for tenant ' + blockedTenantId + '.';
+    const overlay = document.getElementById('loading-overlay');
+    if (overlay) {
+      const actions = [
+        { label: 'Use a different account', className: 'btn btn-primary', run: () => portalAuth.signIn() },
+        { label: 'Sign out',                className: 'btn btn-ghost',   run: () => portalAuth.signOutAll() }
+      ];
+      actions.forEach(({ label, className, run }) => {
+        const btn = document.createElement('button');
+        btn.textContent = label;
+        btn.className = className;
+        btn.style.marginTop = '14px';
+        btn.addEventListener('click', () => {
+          btn.disabled = true;
+          run().catch(e => {
+            btn.disabled = false;
+            console.error('[App] Blocked-tenant action error:', e);
+          });
+        });
+        overlay.appendChild(btn);
+      });
+    }
+    return;
+  }
   if (!account) {
     // Not signed in — attempt redirect. loginRedirect() navigates away;
     // if it throws before navigating, show a fallback sign-in button.
@@ -3059,6 +3103,15 @@ async function bootstrap() {
 
   // Initialise header quick actions
   _renderQuickActions();
+
+  if (blockedTenantId) {
+    showToast({
+      title: 'Tenant not enabled',
+      description: 'This portal isn\u2019t enabled for tenant ' + blockedTenantId + '. You\u2019re still signed in as ' + (account.username || account.name) + '.',
+      type: 'warning',
+      duration: 10000
+    });
+  }
 
   // Initialise profile DB (non-blocking — it'll be ready long before the user clicks Save)
   profileManager.init().catch(err => console.warn('[App] ProfileManager init failed:', err));
@@ -3620,6 +3673,10 @@ async function bootstrap() {
     sessionStorage.removeItem(PENDING_ACTIVATION_KEY);
     try {
       const saved = JSON.parse(_savedActivation);
+      if (!accountUtils.pendingBelongsToAccount(saved, portalAuth.getActiveAccountKey())) {
+        showToast({ title: 'Activation discarded', description: 'The pending activation belonged to a different account.', type: 'warning' });
+        return;
+      }
       const { cappedRoles, justification, ticketNumber, authContextId, claims, scheduledStartDateTime, claimsChallengeRetried } = saved;
       // Reactive claims-challenge resume: replay the server-issued claims blob
       // verbatim. Falls back to authContextId for the proactive step-up path.

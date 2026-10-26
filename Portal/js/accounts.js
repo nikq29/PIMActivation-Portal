@@ -80,7 +80,37 @@
     return [...new Set(accounts.map(a => a.homeAccountId))];
   }
 
-  const accountUtils = { entryKey, parseAllowedTenants, isTenantAllowed, pickActiveAccount, entriesForUser, logoutTargets };
+  /**
+   * Whether a pending activation saved before a step-up redirect may resume
+   * under the currently active account. Payloads without an accountKey were
+   * saved by a tab running an older version and are allowed.
+   * @param {{ accountKey?: string }} saved
+   * @param {string} activeKey
+   * @returns {boolean}
+   */
+  function pendingBelongsToAccount(saved, activeKey) {
+    if (!saved?.accountKey) return true;
+    return saved.accountKey === activeKey;
+  }
+
+  /**
+   * Merge tenants reported by one account into the tenant display-name cache.
+   * Each account only reports the tenants it can reach, so entries from other
+   * accounts are kept.
+   * @param {Object<string, object>} cache  tenantId → tenant
+   * @param {object[]} tenants  ARM tenant list ({ tenantId, displayName, ... })
+   * @returns {Object<string, object>} new cache object
+   */
+  function mergeTenantCache(cache, tenants) {
+    const merged = { ...cache };
+    tenants.forEach(t => { merged[t.tenantId] = t; });
+    return merged;
+  }
+
+  const accountUtils = {
+    entryKey, parseAllowedTenants, isTenantAllowed, pickActiveAccount,
+    entriesForUser, logoutTargets, pendingBelongsToAccount, mergeTenantCache
+  };
 
   if (typeof window !== 'undefined') window.accountUtils = accountUtils;
   if (typeof module !== 'undefined' && module.exports) module.exports = accountUtils;

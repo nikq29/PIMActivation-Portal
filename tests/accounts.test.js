@@ -12,7 +12,9 @@ const {
   isTenantAllowed,
   pickActiveAccount,
   entriesForUser,
-  logoutTargets
+  logoutTargets,
+  pendingBelongsToAccount,
+  mergeTenantCache
 } = require('../Portal/js/accounts.js');
 
 const A      = { homeAccountId: 'uidA.tidA', tenantId: 'aaaaaaaa-0000-0000-0000-000000000001', name: 'Alice' };
@@ -61,4 +63,19 @@ test('pickActiveAccount prefers stored key, skips disallowed, falls back', () =>
 test('entriesForUser and logoutTargets group by homeAccountId', () => {
   assert.deepEqual(entriesForUser([A, B, Aguest], A.homeAccountId), [A, Aguest]);
   assert.deepEqual(logoutTargets([A, B, Aguest]), [A.homeAccountId, B.homeAccountId]);
+});
+
+test('pendingBelongsToAccount only resumes for the account that saved it', () => {
+  assert.equal(pendingBelongsToAccount({ accountKey: entryKey(A) }, entryKey(A)), true);
+  assert.equal(pendingBelongsToAccount({ accountKey: entryKey(A) }, entryKey(B)), false);
+  assert.equal(pendingBelongsToAccount({ accountKey: entryKey(A) }, ''), false);
+  assert.equal(pendingBelongsToAccount({}, entryKey(A)), true);   // saved by a pre-upgrade tab
+});
+
+test('mergeTenantCache keeps tenants reported by other accounts', () => {
+  const cache = { [A.tenantId]: { tenantId: A.tenantId, displayName: 'Contoso' } };
+  const merged = mergeTenantCache(cache, [{ tenantId: B.tenantId, displayName: 'Fabrikam' }]);
+  assert.deepEqual(Object.keys(merged).sort(), [A.tenantId, B.tenantId]);
+  assert.equal(mergeTenantCache(merged, [{ tenantId: A.tenantId, displayName: 'Contoso Ltd' }])[A.tenantId].displayName, 'Contoso Ltd');
+  assert.deepEqual(cache, { [A.tenantId]: { tenantId: A.tenantId, displayName: 'Contoso' } }); // input not mutated
 });
