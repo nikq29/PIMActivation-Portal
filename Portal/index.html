@@ -84,7 +84,7 @@
             </a>
           </div>
         </div>
-        <button class="icon-btn icon-btn-signout" id="sign-out-btn" aria-label="Sign out" title="Sign out">
+        <button class="icon-btn icon-btn-signout" id="sign-out-btn" aria-label="Accounts &amp; sign out" title="Accounts &amp; sign out">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
         </button>
       </div>
@@ -112,6 +112,10 @@
           <div class="uc-label">Tenant</div>
           <div id="user-tenant" class="uc-value uc-mono"></div>
         </div>
+        <button class="uc-tenant-switch-btn" id="account-switch-btn" aria-label="Switch account" title="Switch account">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+          Switch Account
+        </button>
         <button class="uc-tenant-switch-btn" id="tenant-switch-btn" aria-label="Switch tenant" title="Switch tenant">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 7H3"/><polyline points="18 4 21 7 18 10"/><path d="M3 17h18"/><polyline points="6 14 3 17 6 20"/></svg>
           Switch Tenant
@@ -863,6 +867,26 @@
     </div>
   </div>
 
+  <!-- ── Account picker modal ────────────────────────────────────────────── -->
+  <div id="account-picker-modal" class="modal-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="account-picker-title">
+    <div class="modal modal-sm">
+      <div class="modal-header">
+        <h2 class="modal-title" id="account-picker-title">Accounts</h2>
+        <button class="icon-btn modal-close" id="account-picker-close-btn" aria-label="Close">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+      <div class="modal-body" id="account-picker-body"></div>
+      <div class="modal-footer account-picker-footer">
+        <button class="btn btn-ghost btn-sm" id="account-add-btn">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          Add account
+        </button>
+        <button class="btn btn-danger btn-sm" id="account-signout-all-btn">Sign out of all accounts</button>
+      </div>
+    </div>
+  </div>
+
   <!-- ── Activation modal ────────────────────────────────────────────────── -->
   <div id="activation-modal" class="modal-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="modal-title">
     <div class="modal">
@@ -1026,7 +1050,7 @@
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="help-callout-icon" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
             <div class="help-callout-body">
               <div class="help-callout-title">Multiple tenants?</div>
-              <div class="help-callout-text">Use the tenant selector in the header — repeat the 3 steps above for each tenant independently.</div>
+              <div class="help-callout-text">Use <strong>Switch Tenant</strong> to move your account into a tenant where you are a guest, or <strong>Switch Account</strong> (also under the sign-out button in the header) to add and switch between separate accounts for each tenant. Repeat the 3 steps above in each tenant.</div>
             </div>
           </div>
           <div class="help-callout help-callout--success">
@@ -1047,7 +1071,7 @@
               <div class="help-feature-card help-feature-card--highlight">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="help-feature-icon" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
                 <div class="help-feature-title">Cross-Tenant</div>
-                <div class="help-feature-desc">Manage roles across multiple tenants. Each tenant authenticates independently with its own isolated session.</div>
+                <div class="help-feature-desc">Manage roles across multiple tenants and accounts. Stay signed in with several accounts and switch between them in one click; each account's roles and cache stay separate.</div>
               </div>
               <div class="help-feature-card help-feature-card--success">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="help-feature-icon" aria-hidden="true"><path d="m19 21-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16z"/></svg>
@@ -1093,7 +1117,7 @@
           <div class="help-section">
             <span class="help-eyebrow">Architecture</span>
             <div class="help-section-title">Direct API access, no backend</div>
-            <p>A fully static single-page application. Your browser authenticates via MSAL and calls Microsoft Graph and ARM directly — no backend, no proxy. Switching tenants starts a fresh auth flow; each tenant's token and session are fully isolated.</p>
+            <p>A fully static single-page application. Your browser authenticates via MSAL and calls Microsoft Graph and ARM directly — no backend, no proxy. Switching tenants starts a fresh auth flow; switching between signed-in accounts reuses their cached tokens. Each account's tokens, roles and cache stay isolated, and everything is cleared when the tab closes.</p>
             <div class="help-flow">
               <div class="help-flow-item">Browser authenticates via MSAL → Entra ID</div>
               <div class="help-flow-item">Entra ID issues an access token (held in memory only)</div>
@@ -1135,7 +1159,7 @@
             </div>
             <div class="help-faq-item">
               <div class="help-faq-q">Can I self-host it?</div>
-              <div class="help-faq-a">Yes. Provide your own Client ID and Tenant ID in the MSAL config. The portal is a static HTML/JS/CSS bundle — host it anywhere (Azure Static Web Apps, GitHub Pages, etc.). Go back to the home site for self-hosting option.</div>
+              <div class="help-faq-a">Yes. Provide your own Client ID and Tenant ID in the MSAL config. The portal is a static HTML/JS/CSS bundle — host it anywhere (Azure Static Web Apps, GitHub Pages, etc.). The Azure deployment template can also deploy one multi-tenant portal for several tenants, optionally limited to a list of tenant IDs. Go back to the home site for self-hosting option.</div>
             </div>
           </div>
         </div>

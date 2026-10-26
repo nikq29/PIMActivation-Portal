@@ -73,6 +73,7 @@ The portal is a pure single-page application. There is no backend, no proxy, and
 - **Three PIM planes in one table** — Entra ID roles (directory-scoped and Administrative-Unit-scoped), Azure Resource roles (tenant-root `asTarget()` enumeration — no per-subscription crawl), and PIM for Groups (member and owner access)
 - **Pending approval tracking** — roles awaiting approver action are shown inline with a pending tag and surface in activity history
 - **Tenant switcher** — switch between home, guest, and member tenants without signing out; the choice persists for the tab session
+- **Account switcher** — stay signed in with several accounts (for example a separate admin account per tenant) and switch between them in one click from **Switch Account** or the header's **Accounts & sign out** button; sign out one account or **all accounts**, which ends every account's Microsoft session
 - **Scheduled activation** — optionally schedule a future start time, capped to policy
 
 ### Policy awareness

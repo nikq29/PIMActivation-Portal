@@ -575,6 +575,39 @@ a { color: var(--primary); text-decoration: none; }
   color:      var(--text-muted);
 }
 
+/* ── Account picker modal ────────────────────────────────────────────────── */
+.account-row {
+  display:       flex;
+  align-items:   center;
+  gap:           6px;
+  margin-bottom: 6px;
+}
+.account-row .tenant-item { margin-bottom: 0; flex: 1; min-width: 0; }
+.account-item-user {
+  font-size:     12px;
+  color:         var(--text-muted);
+  white-space:   nowrap;
+  overflow:      hidden;
+  text-overflow: ellipsis;
+}
+.account-signout-btn { flex-shrink: 0; }
+.account-confirm {
+  display:        flex;
+  flex-direction: column;
+  gap:            8px;
+  padding:        10px 12px;
+  margin-bottom:  8px;
+  border:         1px solid var(--danger);
+  border-radius:  var(--radius-sm);
+  font-size:      12px;
+  color:          var(--text);
+}
+.account-confirm-actions { display: flex; gap: 8px; justify-content: flex-end; }
+.account-picker-footer   { justify-content: space-between; flex-wrap: wrap; }
+@media (max-width: 640px) {
+  .uc-tenant-item { flex-wrap: wrap; }
+}
+
 /* ── Help modal ───────────────────────────────────────────────────────────── */
 .help-body              { gap: 0; }
 [id^="help-content-"]   { display: flex; flex-direction: column; gap: 16px; }

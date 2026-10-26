@@ -1460,6 +1460,116 @@ function _renderTenantList(body, allTenants) {
   });
 }
 
+// ── Account picker ────────────────────────────────────────────────────────────
+
+const _CHEVRON_SVG  = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 18 15 12 9 6"/></svg>';
+const _SIGNOUT_SVG  = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>';
+
+function _closeAccountPicker() {
+  const modal = document.getElementById('account-picker-modal');
+  if (modal) modal.hidden = true;
+}
+
+function _openAccountPicker() {
+  // Never switch or sign out underneath a running bulk operation
+  if (_opOverlay.isOpen()) {
+    showToast({ title: 'Operation in progress', description: 'Wait for the current activation or deactivation to finish.', type: 'warning' });
+    return;
+  }
+  const modal = document.getElementById('account-picker-modal');
+  const body  = document.getElementById('account-picker-body');
+  if (!modal || !body) return;
+
+  _renderAccountList(body);
+  modal.hidden = false;
+  modal.querySelector('.modal')?.classList.add('fade-in');
+}
+
+function _accountTenantLabel(account) {
+  const tenantId = account.tenantId || account.idTokenClaims?.tid || '';
+  return _getTenantCache()[tenantId]?.displayName || tenantId;
+}
+
+function _renderAccountList(body) {
+  const accounts  = portalAuth.listAccounts();
+  const activeKey = portalAuth.getActiveAccountKey();
+
+  if (accounts.length === 0) {
+    body.innerHTML = '<p class="tenant-picker-hint">No signed-in accounts.</p>';
+    return;
+  }
+
+  // listAccounts() returns the active entry first
+  body.innerHTML = accounts.map(a => {
+    const key       = accountUtils.entryKey(a);
+    const isCurrent = key === activeKey;
+    return (
+      '<div class="account-row">' +
+        '<button class="tenant-item account-item' + (isCurrent ? ' tenant-item-current' : '') + '"' +
+          ' data-key="' + escapeHtml(key) + '"' +
+          (isCurrent ? ' disabled aria-current="true"' : '') + '>' +
+          '<div class="tenant-item-info">' +
+            '<div class="tenant-item-name">'   + escapeHtml(a.name || a.username) + '</div>' +
+            '<div class="account-item-user">'  + escapeHtml(a.username) + '</div>' +
+            '<div class="tenant-item-domain">' + escapeHtml(_accountTenantLabel(a)) + '</div>' +
+          '</div>' +
+          (isCurrent ? '<span class="tenant-item-badge">Current</span>' : _CHEVRON_SVG) +
+        '</button>' +
+        '<button class="icon-btn account-signout-btn" data-home-account-id="' + escapeHtml(a.homeAccountId) + '"' +
+          ' aria-label="Sign out ' + escapeHtml(a.username) + '" title="Sign out ' + escapeHtml(a.username) + '">' +
+          _SIGNOUT_SVG +
+        '</button>' +
+      '</div>'
+    );
+  }).join('');
+
+  body.querySelectorAll('.account-item:not([disabled])').forEach(btn => {
+    btn.addEventListener('click', () => {
+      btn.disabled = true;
+      btn.innerHTML = '<span class="tenant-item-switching">Switching…</span>';
+      try {
+        portalAuth.switchAccount(btn.dataset.key);
+        // Page reloads — code below only runs if something went wrong
+      } catch (err) {
+        showToast({ title: 'Account switch failed', description: err.message, type: 'error' });
+        _closeAccountPicker();
+      }
+    });
+  });
+
+  body.querySelectorAll('.account-signout-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const homeAccountId = btn.dataset.homeAccountId;
+      // MSAL removes every tenant entry of a user, so confirm when there are several
+      const entries = accountUtils.entriesForUser(accounts, homeAccountId);
+      if (entries.length > 1) _showAccountSignOutConfirm(btn.closest('.account-row'), entries);
+      else _signOutAccountUser(homeAccountId);
+    });
+  });
+}
+
+function _signOutAccountUser(homeAccountId) {
+  portalAuth.signOutUser(homeAccountId).catch(err => {
+    showToast({ title: 'Sign-out failed', description: err.message, type: 'error' });
+  });
+}
+
+function _showAccountSignOutConfirm(row, entries) {
+  row.parentElement.querySelectorAll('.account-confirm').forEach(el => el.remove());
+  const confirm = document.createElement('div');
+  confirm.className = 'account-confirm';
+  confirm.innerHTML =
+    '<span>Signs out ' + escapeHtml(entries[0].username) + ' from ' + entries.length + ' tenants: ' +
+      escapeHtml(entries.map(_accountTenantLabel).join(', ')) + '</span>' +
+    '<div class="account-confirm-actions">' +
+      '<button class="btn btn-danger btn-sm" data-action="confirm">Sign out</button>' +
+      '<button class="btn btn-ghost btn-sm" data-action="cancel">Cancel</button>' +
+    '</div>';
+  row.after(confirm);
+  confirm.querySelector('[data-action="confirm"]').addEventListener('click', () => _signOutAccountUser(entries[0].homeAccountId));
+  confirm.querySelector('[data-action="cancel"]').addEventListener('click', () => confirm.remove());
+}
+
 function _renderQuickActions() {
   const container = document.getElementById('header-quick-actions');
   if (!container) return;
@@ -3129,13 +3239,26 @@ async function bootstrap() {
 
   // ── Event wiring ──────────────────────────────────────────────────────────
 
-  // Sign out
-  document.getElementById('sign-out-btn')
-    ?.addEventListener('click', () => {
-      portalAuth.signOutAll().catch(err => {
-        showToast({ title: 'Sign-out failed', description: err.message, type: 'error' });
-      });
+  // Accounts & sign out (header button stays reachable when the user card is hidden)
+  document.getElementById('sign-out-btn')?.addEventListener('click', _openAccountPicker);
+  document.getElementById('account-switch-btn')?.addEventListener('click', _openAccountPicker);
+  document.getElementById('account-picker-close-btn')?.addEventListener('click', _closeAccountPicker);
+  document.getElementById('account-picker-modal')?.addEventListener('click', e => {
+    if (e.target === e.currentTarget) _closeAccountPicker();
+  });
+  document.getElementById('account-add-btn')?.addEventListener('click', () => {
+    portalAuth.signIn().catch(err => {
+      showToast({ title: 'Add account failed', description: err.message, type: 'error' });
     });
+  });
+  document.getElementById('account-signout-all-btn')?.addEventListener('click', e => {
+    const btn = e.currentTarget;
+    btn.disabled = true;
+    portalAuth.signOutAll().catch(err => {
+      btn.disabled = false;
+      showToast({ title: 'Sign-out failed', description: err.message, type: 'error' });
+    });
+  });
 
   // Tenant picker
   document.getElementById('tenant-switch-btn')?.addEventListener('click', _openTenantPicker);
@@ -3595,6 +3718,8 @@ async function bootstrap() {
     const expModal   = document.getElementById('export-config-modal');
     const impModal   = document.getElementById('import-profiles-modal');
     const helpModal  = document.getElementById('help-modal');
+    const accModal   = document.getElementById('account-picker-modal');
+    if (accModal   && !accModal.hidden)   { _closeAccountPicker();    return; }
     if (impModal   && !impModal.hidden)   { impModal.hidden = true;   return; }
     if (expModal   && !expModal.hidden)   { _hideExportConfigModal(); return; }
     if (actModal   && !actModal.hidden)   { hideActivationModal();    return; }
