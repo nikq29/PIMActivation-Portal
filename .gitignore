@@ -10,5 +10,5 @@ e2e/*
 # Security tooling
 security/node_modules/
 security/.tmp-*
-# Superpowers design specs and implementation plans (local only)
-docs/superpowers/
+
+docs/
