@@ -6,6 +6,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+#### Multiple accounts and tenants
+- Account switcher — stay signed in with several accounts in one tab (for example a separate admin account per tenant) and switch between them in one click from **Switch Account** in the user card or the header's **Accounts & sign out** button. Switching reuses cached tokens and reloads the page, so no roles, policies or selections carry over between accounts.
+- Per-account sign-out (signs that user out of the portal and switches to a remaining account) and **Sign out of all accounts**, which ends every account's Microsoft session with one logout redirect per account.
+- Pending Conditional Access step-up activations are tied to the account that started them and are discarded if a different account is active on return.
+
+#### Self-hosted deployment
+- `multiTenant` Bicep / ARM parameter — deploys one portal with the `organizations` authority to serve several tenants from a multi-tenant app registration.
+- `allowedTenantIds` parameter — optional list of tenants the portal accepts. Accounts from other tenants are never activated; signing in with only such accounts shows a "not enabled for this tenant" screen. UI restriction only; access control stays with per-tenant admin consent and enterprise-app assignment.
+- `adminConsentUrls` output with one admin consent URL per allowed tenant, and a deployment warning when `multiTenant` is set but the app registration is single-tenant.
+
+### Changed
+- The header sign-out button now opens the **Accounts** menu (switch, add, sign out one or all accounts).
+- The session role cache is keyed by account (user + tenant) instead of tenant, so two users in the same tenant never share cached roles.
+- The tenant display-name cache now merges tenants reported by every signed-in account.
+- The Switch Tenant picker only lists tenants permitted by `allowedTenantIds` when it is set.
+
 ## [1.3.0] — 2026-08-30
 
 ### Added
